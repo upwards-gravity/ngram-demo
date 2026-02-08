@@ -266,7 +266,7 @@ function NGramApp() {
   var tabs = [
     { n: 1, label: "1-Gramm", color: "#e06c75" },
     { n: 2, label: "2-Gramm", color: "#61afef" },
-    { n: 3, label: "3-Gramm", color: "#c678dd" },
+    { n: 3, label: "3-Gramm", color: "#98c379" },
   ];
   var at = tabs.find(function(t) { return t.n === activeN; });
   var color = at ? at.color : "#61afef";
@@ -429,7 +429,7 @@ function NGramApp() {
   return (
     <div style={{ color: "#e0e0e0", fontFamily: "'Nunito', sans-serif", padding: "24px 16px", maxWidth: 800, margin: "0 auto" }}>
       <div style={{ textAlign: "center", marginBottom: 28 }}>
-        <h1 style={{ fontSize: 32, fontWeight: 900, margin: 0, background: "linear-gradient(90deg, #e06c75, #61afef, #c678dd)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>N-Gramm Werkstatt</h1>
+        <h1 style={{ fontSize: 32, fontWeight: 900, margin: 0, background: "linear-gradient(90deg, #e06c75, #61afef, #98c379)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>N-Gramm Werkstatt</h1>
         <p style={{ fontSize: 14, opacity: 0.5, margin: "6px 0 0" }}>Wortmuster · Sampling · Temperatur</p>
         <button onClick={function() { setShowExperiments(!showExperiments); }}
           style={{ marginTop: 12, padding: "6px 14px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.2)", background: showExperiments ? "rgba(255,255,255,0.1)" : "transparent", color: "rgba(255,255,255,0.7)", fontSize: 12, cursor: "pointer" }}>

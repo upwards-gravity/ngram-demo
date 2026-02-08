@@ -28,12 +28,11 @@ var useRef = React.useRef;
 var useEffect = React.useEffect;
 
 var EXAMPLE_TEXTS = [
-  "Hallo du da.",
-  "Die Katze sitzt auf der Matte. Die Matte ist weich. Die Katze schläft.",
-  "Der kleine Hund lief durch den großen Garten. Der kleine Hund bellte laut. Die Katze saß auf dem Dach und schaute hinunter. Der große Garten war voller Blumen. Die Katze sprang vom Dach und lief durch den Garten. Der kleine Hund jagte die Katze durch den großen Garten. Die Katze kletterte auf den Baum. Der Hund bellte laut unter dem Baum.",
-  "Es war einmal ein König, der hatte drei Töchter. Die älteste Tochter war klug, die mittlere Tochter war fleißig, und die jüngste Tochter war freundlich. Der König liebte alle drei Töchter sehr. Eines Tages kam ein Drache ins Königreich. Der Drache war groß und gefährlich. Die älteste Tochter hatte eine Idee. Die mittlere Tochter half ihr dabei. Die jüngste Tochter sprach mit dem Drachen. Der Drache war gar nicht böse, er war nur einsam. Die drei Töchter und der Drache wurden Freunde. Der König war sehr stolz auf seine drei Töchter."
+  { label: "Kurz", text: "Hallo Welt. Hallo du. Hallo Freund." },
+  { label: "Mittel", text: "Die Katze sitzt auf der Matte. Die Matte ist weich. Die Katze schläft." },
+  { label: "Lang", text: "Der kleine Hund lief durch den großen Garten. Der kleine Hund bellte laut. Die Katze saß auf dem Dach und schaute hinunter. Der große Garten war voller Blumen. Die Katze sprang vom Dach und lief durch den Garten. Der kleine Hund jagte die Katze durch den großen Garten. Die Katze kletterte auf den Baum. Der Hund bellte laut unter dem Baum." },
+  { label: "Sehr lang", text: "Es war einmal ein König, der hatte drei Töchter. Die älteste Tochter war klug, die mittlere Tochter war fleißig, und die jüngste Tochter war freundlich. Der König liebte alle drei Töchter sehr. Eines Tages kam ein Drache ins Königreich. Der Drache war groß und gefährlich. Die älteste Tochter hatte eine Idee. Die mittlere Tochter half ihr dabei. Die jüngste Tochter sprach mit dem Drachen. Der Drache war gar nicht böse, er war nur einsam. Die drei Töchter und der Drache wurden Freunde. Der König war sehr stolz auf seine drei Töchter." }
 ];
-var EXAMPLE_TEXT = EXAMPLE_TEXTS[2];
 var PUNCT = new Set([".", ",", "!", "?", ";", ":"]);
 var SAMPLING_SLOTS = 8;
 var MAX_STEPS = 60;
@@ -77,11 +76,9 @@ function applyTemperature(candidates, temperature) {
   if (candidates.length === 0) return [];
   var total = 0;
   for (var i = 0; i < candidates.length; i++) total += candidates[i].count;
-  if (temperature < 0.01) {
-    // Greedy: 100% für den ersten Kandidaten (deterministisch)
-    return candidates.map(function(c, i) { return { word: c.word, count: c.count, prob: i === 0 ? 1.0 : 0 }; });
-  }
-  var logProbs = candidates.map(function(c) { return Math.log(c.count / total) / temperature; });
+  // Temperatur 0 behandeln wir als sehr kleine Zahl (verhindert Division durch 0)
+  var temp = Math.max(temperature, 0.001);
+  var logProbs = candidates.map(function(c) { return Math.log(c.count / total) / temp; });
   var ml = logProbs[0];
   for (var i = 1; i < logProbs.length; i++) { if (logProbs[i] > ml) ml = logProbs[i]; }
   var es = 0;
@@ -211,7 +208,7 @@ function SamplingViz(props) {
 }
 
 function NGramApp() {
-  var _s = useState(EXAMPLE_TEXT); var inputText = _s[0], setInputText = _s[1];
+  var _s = useState(EXAMPLE_TEXTS[0].text); var inputText = _s[0], setInputText = _s[1];
   var _n = useState(1); var activeN = _n[0], setActiveN = _n[1];
   var _p = useState(""); var prompt = _p[0], setPrompt = _p[1];
   var _t = useState(0); var temperature = _t[0], setTemperature = _t[1];
@@ -394,7 +391,7 @@ function NGramApp() {
   useEffect(function() { if (outputRef.current) outputRef.current.scrollTop = outputRef.current.scrollHeight; }, [tick]);
   useEffect(function() { return function() { stopAuto(); }; }, []);
 
-  var tempLabel = temperature < 0.01 ? "Greedy" : temperature < 0.5 ? "Wenig Zufall" : temperature < 1.2 ? "Normal" : temperature < 2.0 ? "Viel Zufall" : "Chaotisch";
+  var tempLabel = temperature < 0.3 ? "Wenig Zufall" : temperature < 1.2 ? "Normal" : temperature < 2.0 ? "Viel Zufall" : "Chaotisch";
   var autoOn = autoOnRef.current;
 
   return (
@@ -407,14 +404,12 @@ function NGramApp() {
       <div style={{ marginBottom: 24 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
           <label style={{ fontSize: 13, fontWeight: 700, opacity: 0.7 }}>Quelltext</label>
-          <select onChange={function(e) { if (e.target.value !== "") { setInputText(EXAMPLE_TEXTS[parseInt(e.target.value)]); resetGen(); e.target.value = ""; } }}
-            style={{ padding: "4px 8px", borderRadius: 6, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.3)", color: "rgba(255,255,255,0.7)", fontSize: 12, cursor: "pointer" }}>
-            <option value="">Beispiel wählen...</option>
-            <option value="0">Kurz (3 Wörter)</option>
-            <option value="1">Mittel (15 Wörter)</option>
-            <option value="2">Lang (70 Wörter)</option>
-            <option value="3">Sehr lang (130 Wörter)</option>
-          </select>
+          <div style={{ display: "flex", gap: 4 }}>
+            {EXAMPLE_TEXTS.map(function(ex, i) {
+              return <button key={i} onClick={function() { setInputText(ex.text); resetGen(); }}
+                style={{ padding: "3px 8px", borderRadius: 6, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.3)", color: "rgba(255,255,255,0.6)", fontSize: 11, cursor: "pointer" }}>{ex.label}</button>;
+            })}
+          </div>
         </div>
         <textarea value={inputText} onChange={function(e) { setInputText(e.target.value); resetGen(); }} rows={4}
           style={{ width: "100%", boxSizing: "border-box", padding: 14, borderRadius: 12, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(0,0,0,0.3)", color: "#e0e0e0", fontFamily: "'Fira Mono', monospace", fontSize: 13, lineHeight: 1.6, resize: "vertical", outline: "none" }} />

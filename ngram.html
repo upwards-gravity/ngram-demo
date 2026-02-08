@@ -90,6 +90,11 @@ function getCandidates(tokens, n, context) {
 }
 function applyTemperature(candidates, temperature) {
   if (candidates.length === 0) return [];
+  // Bei unendlicher Temperatur: uniforme Verteilung
+  if (temperature === Infinity) {
+    var uniformProb = 1 / candidates.length;
+    return candidates.map(function(c) { return { word: c.word, count: c.count, prob: uniformProb }; });
+  }
   var total = 0;
   for (var i = 0; i < candidates.length; i++) total += candidates[i].count;
   // Temperatur 0 behandeln wir als sehr kleine Zahl (verhindert Division durch 0)
@@ -423,7 +428,7 @@ function NGramApp() {
   useEffect(function() { if (outputRef.current) outputRef.current.scrollTop = outputRef.current.scrollHeight; }, [tick]);
   useEffect(function() { return function() { stopAuto(); }; }, []);
 
-  var tempLabel = temperature < 0.3 ? "Wenig Zufall" : temperature < 1.2 ? "Normal" : temperature < 2.0 ? "Viel Zufall" : "Chaotisch";
+  var tempLabel = temperature === Infinity ? "Uniform" : temperature < 0.3 ? "Wenig Zufall" : temperature < 1.2 ? "Normal" : temperature < 2.0 ? "Viel Zufall" : "Chaotisch";
   var autoOn = autoOnRef.current;
 
   return (
@@ -536,13 +541,17 @@ function NGramApp() {
             <label style={{ fontSize: 13, fontWeight: 700, color: "#e5c07b" }}>Temperatur</label>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               <span style={{ fontSize: 12, opacity: 0.6, color: "#e5c07b" }}>{tempLabel}</span>
-              <span style={{ fontFamily: "'Fira Mono', monospace", fontSize: 14, fontWeight: 700, color: "#e5c07b" }}>{temperature.toFixed(2)}</span>
+              <span style={{ fontFamily: "'Fira Mono', monospace", fontSize: 14, fontWeight: 700, color: "#e5c07b" }}>{temperature === Infinity ? "∞" : temperature.toFixed(2)}</span>
             </div>
           </div>
-          <input type="range" min="0" max="3" step="0.05" value={temperature} onChange={function(e) { setTemperature(parseFloat(e.target.value)); }} disabled={autoOn} style={{ width: "100%", margin: 0 }} />
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <input type="range" min="0" max="5" step="0.05" value={temperature === Infinity ? 5 : temperature} onChange={function(e) { setTemperature(parseFloat(e.target.value)); }} disabled={autoOn} style={{ flex: 1, margin: 0 }} />
+              <button onClick={function() { setTemperature(temperature === Infinity ? 1 : Infinity); }} disabled={autoOn}
+                style={{ padding: "4px 8px", borderRadius: 6, border: "1px solid rgba(229,192,123,0.3)", background: temperature === Infinity ? "#e5c07b" : "transparent", color: temperature === Infinity ? "#1a1a2e" : "#e5c07b", fontSize: 12, fontWeight: 700, cursor: autoOn ? "not-allowed" : "pointer" }}>∞</button>
+            </div>
           <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4 }}>
             <span style={{ fontSize: 11, opacity: 0.35 }}>0 = vorhersagbar</span>
-            <span style={{ fontSize: 11, opacity: 0.35 }}>3 = chaotisch</span>
+            <span style={{ fontSize: 11, opacity: 0.35 }}>∞ = alle gleich</span>
           </div>
         </div>
 

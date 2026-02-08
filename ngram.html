@@ -28,7 +28,7 @@ var useRef = React.useRef;
 var useEffect = React.useEffect;
 
 var EXAMPLE_TEXTS = [
-  { label: "Kurz", text: "ich denke also bin ich" },
+  { label: "Kurz", text: "ich weiss, dass ich nichts weiss" },
   { label: "Mittel", text: "Die Katze sitzt auf der Matte. Die Matte ist weich. Die Katze schläft." },
   { label: "Lang", text: "Der kleine Hund lief durch den großen Garten. Der kleine Hund bellte laut. Die Katze saß auf dem Dach und schaute hinunter. Der große Garten war voller Blumen. Die Katze sprang vom Dach und lief durch den Garten. Der kleine Hund jagte die Katze durch den großen Garten. Die Katze kletterte auf den Baum. Der Hund bellte laut unter dem Baum." },
   { label: "Sehr lang", text: "Es war einmal ein König, der hatte drei Töchter. Die älteste Tochter war klug, die mittlere Tochter war fleißig, und die jüngste Tochter war freundlich. Der König liebte alle drei Töchter sehr. Eines Tages kam ein Drache ins Königreich. Der Drache war groß und gefährlich. Die älteste Tochter hatte eine Idee. Die mittlere Tochter half ihr dabei. Die jüngste Tochter sprach mit dem Drachen. Der Drache war gar nicht böse, er war nur einsam. Die drei Töchter und der Drache wurden Freunde. Der König war sehr stolz auf seine drei Töchter." }
@@ -104,15 +104,30 @@ function makeGramKey(n, context, word) {
   return context.split(" ").concat([word]).join(" ");
 }
 
+// Findet alle Positionen eines N-Gramms im Token-Array
+function findNgramPositions(tokens, gramTokens) {
+  var positions = [];
+  var n = gramTokens.length;
+  for (var i = 0; i <= tokens.length - n; i++) {
+    var match = true;
+    for (var j = 0; j < n; j++) {
+      if (tokens[i + j] !== gramTokens[j]) { match = false; break; }
+    }
+    if (match) positions.push(i);
+  }
+  return positions;
+}
+
 function NgramRow(props) {
   var display = detokenize(props.gram.split(" "));
   var hl = props.highlight || props.clickHighlight;
   var col = props.clickHighlight ? props.clickColor || props.color : props.color;
   var relFreq = props.totalCount > 0 ? ((props.count / props.totalCount) * 100).toFixed(1) : "0.0";
   return (
-    <tr data-gram={props.gram} style={{
+    <tr data-gram={props.gram} onClick={props.onClick} style={{
       background: hl ? col + "25" : "transparent",
       transition: "background 0.3s",
+      cursor: "pointer",
     }}>
       <td style={{
         padding: "6px 12px",
@@ -413,7 +428,33 @@ function NGramApp() {
         </div>
         <textarea value={inputText} onChange={function(e) { setInputText(e.target.value); resetGen(); }} rows={4}
           style={{ width: "100%", boxSizing: "border-box", padding: 14, borderRadius: 12, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(0,0,0,0.3)", color: "#e0e0e0", fontFamily: "'Fira Mono', monospace", fontSize: 13, lineHeight: 1.6, resize: "vertical", outline: "none" }} />
-        <div style={{ fontSize: 12, opacity: 0.4, marginTop: 4 }}>{tokens.length} Wörter</div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 4 }}>
+          <div style={{ fontSize: 12, opacity: 0.4 }}>{tokens.length} Wörter</div>
+          {clickedGram && <button onClick={function() { setClickedGram(null); }} style={{ fontSize: 11, padding: "2px 8px", borderRadius: 4, border: "1px solid rgba(255,255,255,0.15)", background: "transparent", color: "rgba(255,255,255,0.5)", cursor: "pointer" }}>Markierung aufheben</button>}
+        </div>
+        {clickedGram && (function() {
+          var gramTokens = clickedGram.split(" ");
+          var positions = findNgramPositions(tokens, gramTokens);
+          var highlighted = new Set();
+          positions.forEach(function(pos) {
+            for (var i = 0; i < gramTokens.length; i++) highlighted.add(pos + i);
+          });
+          return (
+            <div style={{ marginTop: 8, padding: 12, borderRadius: 10, background: "rgba(229,192,123,0.08)", border: "1px solid rgba(229,192,123,0.2)", fontFamily: "'Fira Mono', monospace", fontSize: 13, lineHeight: 1.8 }}>
+              {tokens.map(function(token, i) {
+                var isHl = highlighted.has(i);
+                var sp = i > 0 && !PUNCT.has(token);
+                return (
+                  <span key={i}>
+                    {sp && " "}
+                    <span style={{ background: isHl ? "rgba(229,192,123,0.4)" : "transparent", padding: isHl ? "2px 4px" : 0, borderRadius: 4, fontWeight: isHl ? 700 : 400, color: isHl ? "#e5c07b" : "rgba(255,255,255,0.7)" }}>{token}</span>
+                  </span>
+                );
+              })}
+              <div style={{ fontSize: 11, opacity: 0.5, marginTop: 8 }}>{positions.length} Vorkommen von "{detokenize(gramTokens)}"</div>
+            </div>
+          );
+        })()}
       </div>
 
       <div style={{ marginBottom: 24 }}>
@@ -446,7 +487,8 @@ function NGramApp() {
                       highlight={highlightGram === ng.gram}
                       clickHighlight={clickedGram === ng.gram}
                       clickColor={"#e5c07b"}
-                      color={color} />;
+                      color={color}
+                      onClick={function() { setClickedGram(clickedGram === ng.gram ? null : ng.gram); }} />;
                   });
                 })()}
               </tbody>

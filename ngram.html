@@ -28,7 +28,7 @@ var useRef = React.useRef;
 var useEffect = React.useEffect;
 
 var EXAMPLE_TEXTS = [
-  { label: "Kurz", text: "Hallo Welt. Hallo du. Hallo Freund." },
+  { label: "Kurz", text: "ich denke also bin ich" },
   { label: "Mittel", text: "Die Katze sitzt auf der Matte. Die Matte ist weich. Die Katze schläft." },
   { label: "Lang", text: "Der kleine Hund lief durch den großen Garten. Der kleine Hund bellte laut. Die Katze saß auf dem Dach und schaute hinunter. Der große Garten war voller Blumen. Die Katze sprang vom Dach und lief durch den Garten. Der kleine Hund jagte die Katze durch den großen Garten. Die Katze kletterte auf den Baum. Der Hund bellte laut unter dem Baum." },
   { label: "Sehr lang", text: "Es war einmal ein König, der hatte drei Töchter. Die älteste Tochter war klug, die mittlere Tochter war fleißig, und die jüngste Tochter war freundlich. Der König liebte alle drei Töchter sehr. Eines Tages kam ein Drache ins Königreich. Der Drache war groß und gefährlich. Die älteste Tochter hatte eine Idee. Die mittlere Tochter half ihr dabei. Die jüngste Tochter sprach mit dem Drachen. Der Drache war gar nicht böse, er war nur einsam. Die drei Töchter und der Drache wurden Freunde. Der König war sehr stolz auf seine drei Töchter." }
@@ -225,6 +225,7 @@ function NGramApp() {
   var autoOnRef = useRef(false);
   var outputRef = useRef(null);
   var ngramBoxRef = useRef(null);
+  var liveStepRef = useRef(null);  // Speichert den aktuell angezeigten Step
 
   function rerender() { setTick(function(t) { return t + 1; }); }
 
@@ -256,6 +257,7 @@ function NGramApp() {
       step = { textWords: storedStep.textWords, distribution: liveDist, picked: livePicked, context: storedStep.context, highlightGram: liveHg };
     }
   }
+  liveStepRef.current = step;  // Speichern für advanceOneStep
 
   var displayWords = step ? step.textWords : [];
   var highlightGram = step ? step.highlightGram : null;
@@ -313,21 +315,19 @@ function NGramApp() {
     var h = histRef.current;
     if (h.length >= MAX_STEPS) return false;
     var n = activeN;
-    var prev = h[h.length - 1];
-    if (prev.context == null) return false;  // null/undefined = keine Kandidaten
 
-    // Berechne picked basierend auf aktueller Temperatur
-    var cands = getCandidates(tokens, n, prev.context);
-    if (cands.length === 0) return false;
-    var picked = sampleWord(applyTemperature(cands, temperature));
+    // Verwende das angezeigte picked (aus liveStepRef)
+    var live = liveStepRef.current;
+    if (!live || !live.picked) return false;
+    var picked = live.picked;
 
     // Neuer Text mit picked
-    var newWords = prev.textWords.concat([picked]);
+    var newWords = live.textWords.concat([picked]);
 
     // Neuer Kontext
     var newCtx = "";
     if (n > 1) {
-      var cw = prev.context.split(" ").concat([picked]);
+      var cw = live.context.split(" ").concat([picked]);
       if (cw.length > n - 1) cw.shift();
       newCtx = cw.join(" ");
     }

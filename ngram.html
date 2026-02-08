@@ -27,6 +27,21 @@ var useState = React.useState;
 var useRef = React.useRef;
 var useEffect = React.useEffect;
 
+var EXPERIMENTS = [
+  "Starte mit dem kurzen Text und vergleiche 1-Gramm, 2-Gramm und 3-Gramm. Was fällt auf?",
+  "Setze die Temperatur auf 0 und beobachte: Wird immer dasselbe Wort gewählt?",
+  "Erhöhe die Temperatur langsam von 0 auf 3. Wie verändert sich die Wahrscheinlichkeitsverteilung?",
+  "Klicke auf ein N-Gramm in der Tabelle. Wie oft kommt es im Quelltext vor?",
+  "Finde ein N-Gramm das nur einmal vorkommt. Was bedeutet das für die Generierung?",
+  "Vergleiche die Häufigkeit von 'ich' als 1-Gramm mit 'ich weiss' als 2-Gramm.",
+  "Gib einen Anfangstext ein (z.B. 'Die') und beobachte, wie er die Generierung beeinflusst.",
+  "Nutze den langen Text und starte die Auto-Generierung. Ergibt der Text Sinn?",
+  "Warum wiederholt sich der generierte Text oft? Experimentiere mit verschiedenen Temperaturen.",
+  "Finde heraus: Bei welcher Temperatur ist die Ausgabe am 'kreativsten' aber noch lesbar?",
+  "Vergleiche: Wie unterscheidet sich die Generierung bei 2-Gramm vs. 3-Gramm?",
+  "Schreibe einen eigenen kurzen Text mit Wiederholungen und beobachte die N-Gramme.",
+];
+
 var EXAMPLE_TEXTS = [
   { label: "Kurz", text: "ich weiss, dass ich nichts weiss" },
   { label: "Mittel", text: "Die Katze sitzt auf der Matte. Die Matte ist weich. Die Katze schläft." },
@@ -229,6 +244,7 @@ function NGramApp() {
   var _t = useState(0); var temperature = _t[0], setTemperature = _t[1];
   var _tick = useState(0); var tick = _tick[0], setTick = _tick[1];
   var _cg = useState(null); var clickedGram = _cg[0], setClickedGram = _cg[1];
+  var _exp = useState(false); var showExperiments = _exp[0], setShowExperiments = _exp[1];
 
   // Historie: jeder Schritt = { textWords, distribution, picked, context, highlightGram }
   // textWords = bisher generierte Wörter (picked noch nicht enthalten)
@@ -414,7 +430,22 @@ function NGramApp() {
       <div style={{ textAlign: "center", marginBottom: 28 }}>
         <h1 style={{ fontSize: 32, fontWeight: 900, margin: 0, background: "linear-gradient(90deg, #e06c75, #61afef, #c678dd)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>N-Gramm Werkstatt</h1>
         <p style={{ fontSize: 14, opacity: 0.5, margin: "6px 0 0" }}>Wortmuster · Sampling · Temperatur</p>
+        <button onClick={function() { setShowExperiments(!showExperiments); }}
+          style={{ marginTop: 12, padding: "6px 14px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.2)", background: showExperiments ? "rgba(255,255,255,0.1)" : "transparent", color: "rgba(255,255,255,0.7)", fontSize: 12, cursor: "pointer" }}>
+          {showExperiments ? "▼ Experimente ausblenden" : "▶ Experimente zum Ausprobieren"}
+        </button>
       </div>
+
+      {showExperiments && (
+        <div style={{ marginBottom: 24, padding: 16, borderRadius: 12, background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)" }}>
+          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12, opacity: 0.7 }}>Ideen zum Experimentieren:</div>
+          <ol style={{ margin: 0, paddingLeft: 20, fontSize: 13, lineHeight: 1.8, color: "rgba(255,255,255,0.7)" }}>
+            {EXPERIMENTS.map(function(exp, i) {
+              return <li key={i} style={{ marginBottom: 4 }}>{exp}</li>;
+            })}
+          </ol>
+        </div>
+      )}
 
       <div style={{ marginBottom: 24 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>

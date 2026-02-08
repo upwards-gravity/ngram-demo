@@ -211,9 +211,9 @@ function NGramApp() {
   var _tick = useState(0); var tick = _tick[0], setTick = _tick[1];
   var _cg = useState(null); var clickedGram = _cg[0], setClickedGram = _cg[1];
 
-  // History: each step = { textWords, distribution, picked, context, highlightGram }
-  // textWords = words shown in text (picked NOT included yet)
-  // distribution/picked = sampling for the NEXT word (shown but not inserted)
+  // Historie: jeder Schritt = { textWords, distribution, picked, context, highlightGram }
+  // textWords = bisher generierte Wörter (picked noch nicht enthalten)
+  // distribution/picked = Sampling für das NÄCHSTE Wort
   var histRef = useRef([]);
   var viewRef = useRef(-1);
   var activeRef = useRef(false);
@@ -294,9 +294,9 @@ function NGramApp() {
       var m = ctxs.filter(function(k) { return k.toLowerCase().indexOf(lw) >= 0; });
       if (m.length > 0) { context = m[0]; result = pt.slice(); var ct = context.split(" "); for (var i = 1; i < ct.length; i++) result.push(ct[i]); }
       else { context = ctxs[0]; result = pt.concat(context.split(" ")); }
-    } else { context = n === 1 ? "" : ctxs[0]; result = n === 1 ? [] : context.split(" ").slice(); }
+    } else { context = n === 1 ? "" : ctxs[0]; result = n === 1 ? [] : context.split(" "); }
 
-    var s = makeStep(result.slice(), context, n, temp);
+    var s = makeStep(result, context, n, temp);
     histRef.current = [s];
     viewRef.current = 0;
     activeRef.current = true;
@@ -310,7 +310,7 @@ function NGramApp() {
     if (h.length >= MAX_STEPS) return false;
     var n = activeN;
     var prev = h[h.length - 1];
-    if (!prev.context && prev.context !== "") return false;
+    if (prev.context == null) return false;  // null/undefined = keine Kandidaten
 
     // Berechne picked basierend auf aktueller Temperatur
     var cands = getCandidates(tokens, n, prev.context);
@@ -367,7 +367,7 @@ function NGramApp() {
   function handleCandidateClick(word, context) {
     var gram = makeGramKey(activeN, context, word);
     setClickedGram(gram);
-    // Scroll to matching pill
+    // Scroll zur passenden Tabellenzeile
     if (ngramBoxRef.current) {
       var el = ngramBoxRef.current.querySelector('[data-gram="' + gram + '"]');
       if (el) el.scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -427,14 +427,16 @@ function NGramApp() {
                 </tr>
               </thead>
               <tbody>
-                {ngrams.map(function(ng) {
+                {(function() {
                   var totalCount = tokens.length - activeN + 1;
-                  return <NgramRow key={ng.gram} gram={ng.gram} count={ng.count} totalCount={totalCount}
-                    highlight={highlightGram === ng.gram}
-                    clickHighlight={clickedGram === ng.gram}
-                    clickColor={"#e5c07b"}
-                    color={color} />;
-                })}
+                  return ngrams.map(function(ng) {
+                    return <NgramRow key={ng.gram} gram={ng.gram} count={ng.count} totalCount={totalCount}
+                      highlight={highlightGram === ng.gram}
+                      clickHighlight={clickedGram === ng.gram}
+                      clickColor={"#e5c07b"}
+                      color={color} />;
+                  });
+                })()}
               </tbody>
             </table>
           )}

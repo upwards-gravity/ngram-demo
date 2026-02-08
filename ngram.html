@@ -27,7 +27,13 @@ var useState = React.useState;
 var useRef = React.useRef;
 var useEffect = React.useEffect;
 
-var EXAMPLE_TEXT = "Der kleine Hund lief durch den großen Garten. Der kleine Hund bellte laut. Die Katze saß auf dem Dach und schaute hinunter. Der große Garten war voller Blumen. Die Katze sprang vom Dach und lief durch den Garten. Der kleine Hund jagte die Katze durch den großen Garten. Die Katze kletterte auf den Baum. Der Hund bellte laut unter dem Baum.";
+var EXAMPLE_TEXTS = [
+  "Hallo du da.",
+  "Die Katze sitzt auf der Matte. Die Matte ist weich. Die Katze schläft.",
+  "Der kleine Hund lief durch den großen Garten. Der kleine Hund bellte laut. Die Katze saß auf dem Dach und schaute hinunter. Der große Garten war voller Blumen. Die Katze sprang vom Dach und lief durch den Garten. Der kleine Hund jagte die Katze durch den großen Garten. Die Katze kletterte auf den Baum. Der Hund bellte laut unter dem Baum.",
+  "Es war einmal ein König, der hatte drei Töchter. Die älteste Tochter war klug, die mittlere Tochter war fleißig, und die jüngste Tochter war freundlich. Der König liebte alle drei Töchter sehr. Eines Tages kam ein Drache ins Königreich. Der Drache war groß und gefährlich. Die älteste Tochter hatte eine Idee. Die mittlere Tochter half ihr dabei. Die jüngste Tochter sprach mit dem Drachen. Der Drache war gar nicht böse, er war nur einsam. Die drei Töchter und der Drache wurden Freunde. Der König war sehr stolz auf seine drei Töchter."
+];
+var EXAMPLE_TEXT = EXAMPLE_TEXTS[2];
 var PUNCT = new Set([".", ",", "!", "?", ";", ":"]);
 var SAMPLING_SLOTS = 8;
 var MAX_STEPS = 60;
@@ -82,13 +88,14 @@ function applyTemperature(candidates, temperature) {
   var exps = logProbs.map(function(lp) { var e = Math.exp(lp - ml); es += e; return e; });
   return candidates.map(function(c, i) { return { word: c.word, count: c.count, prob: exps[i] / es }; });
 }
-// Deterministisch: Wählt den Kandidaten mit höchster Wahrscheinlichkeit (ersten bei Gleichstand)
-function pickBest(dist) {
-  var maxProb = 0, best = dist[0].word;
+// Sampelt ein Wort aus der Verteilung (zufällig, gewichtet nach Wahrscheinlichkeit)
+function sampleWord(dist) {
+  var r = Math.random(), cumulative = 0;
   for (var i = 0; i < dist.length; i++) {
-    if (dist[i].prob > maxProb) { maxProb = dist[i].prob; best = dist[i].word; }
+    cumulative += dist[i].prob;
+    if (r < cumulative) return dist[i].word;
   }
-  return best;
+  return dist[dist.length - 1].word;
 }
 function getAllContexts(tokens, n) {
   var s = new Set();
@@ -205,7 +212,7 @@ function SamplingViz(props) {
 
 function NGramApp() {
   var _s = useState(EXAMPLE_TEXT); var inputText = _s[0], setInputText = _s[1];
-  var _n = useState(2); var activeN = _n[0], setActiveN = _n[1];
+  var _n = useState(1); var activeN = _n[0], setActiveN = _n[1];
   var _p = useState(""); var prompt = _p[0], setPrompt = _p[1];
   var _t = useState(0); var temperature = _t[0], setTemperature = _t[1];
   var _tick = useState(0); var tick = _tick[0], setTick = _tick[1];
@@ -247,7 +254,7 @@ function NGramApp() {
     var cands = getCandidates(tokens, activeN, storedStep.context);
     if (cands.length > 0) {
       var liveDist = applyTemperature(cands, temperature);
-      var livePicked = pickBest(liveDist);
+      var livePicked = sampleWord(liveDist);
       var liveHg = makeGramKey(activeN, storedStep.context, livePicked);
       step = { textWords: storedStep.textWords, distribution: liveDist, picked: livePicked, context: storedStep.context, highlightGram: liveHg };
     }
@@ -274,7 +281,7 @@ function NGramApp() {
     var cands = getCandidates(tokens, n, context);
     if (cands.length === 0) return { textWords: textWords, distribution: null, picked: null, context: context, highlightGram: null };
     var dist = applyTemperature(cands, temp);
-    var picked = pickBest(dist);
+    var picked = sampleWord(dist);
     var hg = makeGramKey(n, context, picked);
     return { textWords: textWords, distribution: dist, picked: picked, context: context, highlightGram: hg };
   }
@@ -315,7 +322,7 @@ function NGramApp() {
     // Berechne picked basierend auf aktueller Temperatur
     var cands = getCandidates(tokens, n, prev.context);
     if (cands.length === 0) return false;
-    var picked = pickBest(applyTemperature(cands, temperature));
+    var picked = sampleWord(applyTemperature(cands, temperature));
 
     // Neuer Text mit picked
     var newWords = prev.textWords.concat([picked]);
@@ -398,7 +405,17 @@ function NGramApp() {
       </div>
 
       <div style={{ marginBottom: 24 }}>
-        <label style={{ display: "block", fontSize: 13, fontWeight: 700, marginBottom: 6, opacity: 0.7 }}>Quelltext</label>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+          <label style={{ fontSize: 13, fontWeight: 700, opacity: 0.7 }}>Quelltext</label>
+          <select onChange={function(e) { if (e.target.value !== "") { setInputText(EXAMPLE_TEXTS[parseInt(e.target.value)]); resetGen(); e.target.value = ""; } }}
+            style={{ padding: "4px 8px", borderRadius: 6, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.3)", color: "rgba(255,255,255,0.7)", fontSize: 12, cursor: "pointer" }}>
+            <option value="">Beispiel wählen...</option>
+            <option value="0">Kurz (3 Wörter)</option>
+            <option value="1">Mittel (15 Wörter)</option>
+            <option value="2">Lang (70 Wörter)</option>
+            <option value="3">Sehr lang (130 Wörter)</option>
+          </select>
+        </div>
         <textarea value={inputText} onChange={function(e) { setInputText(e.target.value); resetGen(); }} rows={4}
           style={{ width: "100%", boxSizing: "border-box", padding: 14, borderRadius: 12, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(0,0,0,0.3)", color: "#e0e0e0", fontFamily: "'Fira Mono', monospace", fontSize: 13, lineHeight: 1.6, resize: "vertical", outline: "none" }} />
         <div style={{ fontSize: 12, opacity: 0.4, marginTop: 4 }}>{tokens.length} Wörter</div>

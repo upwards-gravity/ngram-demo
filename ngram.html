@@ -82,13 +82,14 @@ function applyTemperature(candidates, temperature) {
   var exps = logProbs.map(function(lp) { var e = Math.exp(lp - ml); es += e; return e; });
   return candidates.map(function(c, i) { return { word: c.word, count: c.count, prob: exps[i] / es }; });
 }
-function sampleFromDist(dist) {
-  var r = Math.random(), c = 0;
-  // Bei Gleichstand (r genau auf Grenze) wird der erste genommen (< statt <=)
-  for (var i = 0; i < dist.length; i++) { c += dist[i].prob; if (r < c) return dist[i].word; }
-  return dist[dist.length - 1].word;
+// Deterministisch: Wählt den Kandidaten mit höchster Wahrscheinlichkeit (ersten bei Gleichstand)
+function pickBest(dist) {
+  var maxProb = 0, best = dist[0].word;
+  for (var i = 0; i < dist.length; i++) {
+    if (dist[i].prob > maxProb) { maxProb = dist[i].prob; best = dist[i].word; }
+  }
+  return best;
 }
-function pickFirst(arr) { return arr[0]; }
 function getAllContexts(tokens, n) {
   var s = new Set();
   for (var i = 0; i <= tokens.length - n; i++) s.add(tokens.slice(i, i + n - 1).join(" "));
@@ -215,7 +216,6 @@ function NGramApp() {
   // distribution/picked = sampling for the NEXT word (shown but not inserted)
   var histRef = useRef([]);
   var viewRef = useRef(-1);
-  var ctxRef = useRef(null);
   var activeRef = useRef(false);
   var autoRef = useRef(null);
   var autoOnRef = useRef(false);
@@ -233,7 +233,6 @@ function NGramApp() {
   ];
   var at = tabs.find(function(t) { return t.n === activeN; });
   var color = at ? at.color : "#61afef";
-  var maxCount = ngrams.length > 0 ? ngrams[0].count : 1;
 
   var hist = histRef.current;
   var vi = viewRef.current;
@@ -248,12 +247,7 @@ function NGramApp() {
     var cands = getCandidates(tokens, activeN, storedStep.context);
     if (cands.length > 0) {
       var liveDist = applyTemperature(cands, temperature);
-      // Deterministisch: Nimm den Kandidaten mit höchster Wahrscheinlichkeit (ersten bei Gleichstand)
-      var maxProb = 0;
-      var livePicked = liveDist[0].word;
-      for (var i = 0; i < liveDist.length; i++) {
-        if (liveDist[i].prob > maxProb) { maxProb = liveDist[i].prob; livePicked = liveDist[i].word; }
-      }
+      var livePicked = pickBest(liveDist);
       var liveHg = makeGramKey(activeN, storedStep.context, livePicked);
       step = { textWords: storedStep.textWords, distribution: liveDist, picked: livePicked, context: storedStep.context, highlightGram: liveHg };
     }
@@ -271,7 +265,7 @@ function NGramApp() {
 
   function resetGen() {
     stopAuto();
-    histRef.current = []; viewRef.current = -1; ctxRef.current = null; activeRef.current = false;
+    histRef.current = []; viewRef.current = -1; activeRef.current = false;
     setClickedGram(null);
     rerender();
   }
@@ -280,12 +274,7 @@ function NGramApp() {
     var cands = getCandidates(tokens, n, context);
     if (cands.length === 0) return { textWords: textWords, distribution: null, picked: null, context: context, highlightGram: null };
     var dist = applyTemperature(cands, temp);
-    // Deterministisch: Nimm den Kandidaten mit höchster Wahrscheinlichkeit (ersten bei Gleichstand)
-    var maxProb = 0;
-    var picked = dist[0].word;
-    for (var i = 0; i < dist.length; i++) {
-      if (dist[i].prob > maxProb) { maxProb = dist[i].prob; picked = dist[i].word; }
-    }
+    var picked = pickBest(dist);
     var hg = makeGramKey(n, context, picked);
     return { textWords: textWords, distribution: dist, picked: picked, context: context, highlightGram: hg };
   }
@@ -299,18 +288,17 @@ function NGramApp() {
     if (n === 1) { result = pt.length > 0 ? pt.slice() : []; context = ""; }
     else if (pt.length >= n - 1) {
       result = pt.slice(); context = pt.slice(-(n - 1)).join(" ");
-      if (ctxs.indexOf(context) < 0) { context = pickFirst(ctxs); result = pt.concat(context.split(" ")); }
+      if (ctxs.indexOf(context) < 0) { context = ctxs[0]; result = pt.concat(context.split(" ")); }
     } else if (pt.length > 0) {
       var lw = pt[pt.length - 1].toLowerCase();
       var m = ctxs.filter(function(k) { return k.toLowerCase().indexOf(lw) >= 0; });
-      if (m.length > 0) { context = pickFirst(m); result = pt.slice(); var ct = context.split(" "); for (var i = 1; i < ct.length; i++) result.push(ct[i]); }
-      else { context = pickFirst(ctxs); result = pt.concat(context.split(" ")); }
-    } else { context = n === 1 ? "" : pickFirst(ctxs); result = n === 1 ? [] : context.split(" ").slice(); }
+      if (m.length > 0) { context = m[0]; result = pt.slice(); var ct = context.split(" "); for (var i = 1; i < ct.length; i++) result.push(ct[i]); }
+      else { context = ctxs[0]; result = pt.concat(context.split(" ")); }
+    } else { context = n === 1 ? "" : ctxs[0]; result = n === 1 ? [] : context.split(" ").slice(); }
 
     var s = makeStep(result.slice(), context, n, temp);
     histRef.current = [s];
     viewRef.current = 0;
-    ctxRef.current = context;
     activeRef.current = true;
     setClickedGram(null);
     rerender();
@@ -320,36 +308,27 @@ function NGramApp() {
   function advanceOneStep() {
     var h = histRef.current;
     if (h.length >= MAX_STEPS) return false;
-    var n = activeN; var temp = temperature;
+    var n = activeN;
     var prev = h[h.length - 1];
     if (!prev.context && prev.context !== "") return false;
 
-    // Berechne picked basierend auf aktueller Temperatur (deterministisch)
+    // Berechne picked basierend auf aktueller Temperatur
     var cands = getCandidates(tokens, n, prev.context);
     if (cands.length === 0) return false;
-    var dist = applyTemperature(cands, temp);
-    var maxProb = 0;
-    var picked = dist[0].word;
-    for (var i = 0; i < dist.length; i++) {
-      if (dist[i].prob > maxProb) { maxProb = dist[i].prob; picked = dist[i].word; }
-    }
+    var picked = pickBest(applyTemperature(cands, temperature));
 
-    // Commit picked word into text
-    var newWords = prev.textWords.slice();
-    newWords.push(picked);
+    // Neuer Text mit picked
+    var newWords = prev.textWords.concat([picked]);
 
-    // Compute new context
-    var newCtx;
-    if (n === 1) { newCtx = ""; }
-    else {
-      var cw = prev.context.split(" "); cw.push(picked);
+    // Neuer Kontext
+    var newCtx = "";
+    if (n > 1) {
+      var cw = prev.context.split(" ").concat([picked]);
       if (cw.length > n - 1) cw.shift();
       newCtx = cw.join(" ");
     }
 
-    var s = makeStep(newWords, newCtx, n, temp);
-    h.push(s);
-    ctxRef.current = newCtx;
+    h.push(makeStep(newWords, newCtx, n, temperature));
     viewRef.current = h.length - 1;
     setClickedGram(null);
     rerender();

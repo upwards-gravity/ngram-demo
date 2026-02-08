@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>N-Gramm Werkstatt</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&family=Fira+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: linear-gradient(145deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%); min-height: 100vh; }
+  @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 3px; }
+  input[type=range] { -webkit-appearance: none; height: 6px; border-radius: 3px; background: rgba(255,255,255,0.15); outline: none; }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 18px; height: 18px; border-radius: 50%; background: #e5c07b; cursor: pointer; border: 2px solid #1a1a2e; }
+  button:focus { outline: none; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+var useState = React.useState;
+var useRef = React.useRef;
+var useEffect = React.useEffect;
+
+var EXAMPLE_TEXT = "Der kleine Hund lief durch den großen Garten. Der kleine Hund bellte laut. Die Katze saß auf dem Dach und schaute hinunter. Der große Garten war voller Blumen. Die Katze sprang vom Dach und lief durch den Garten. Der kleine Hund jagte die Katze durch den großen Garten. Die Katze kletterte auf den Baum. Der Hund bellte laut unter dem Baum.";
+var PUNCT = new Set([".", ",", "!", "?", ";", ":"]);
+var SAMPLING_SLOTS = 8;
+var MAX_STEPS = 60;
+
+function tokenize(text) {
+  return text.replace(/([.!?,;:])/g, " $1").split(/\s+/).filter(function(t) { return t.length > 0; });
+}
+function detokenize(tokens) {
+  var out = "";
+  for (var i = 0; i < tokens.length; i++) {
+    if (i > 0 && !PUNCT.has(tokens[i])) out += " ";
+    out += tokens[i];
+  }
+  return out;
+}
+function buildNgrams(tokens, n) {
+  var map = new Map();
+  for (var i = 0; i <= tokens.length - n; i++) {
+    var key = tokens.slice(i, i + n).join(" ");
+    map.set(key, (map.get(key) || 0) + 1);
+  }
+  var entries = Array.from(map.entries());
+  entries.sort(function(a, b) { return b[1] - a[1]; });
+  return entries.map(function(e) { return { gram: e[0], count: e[1] }; });
+}
+function getCandidates(tokens, n, context) {
+  var freq = new Map();
+  if (n === 1) {
+    for (var i = 0; i < tokens.length; i++) freq.set(tokens[i], (freq.get(tokens[i]) || 0) + 1);
+  } else {
+    for (var i = 0; i <= tokens.length - n; i++) {
+      var ctx = tokens.slice(i, i + n - 1).join(" ");
+      if (ctx === context) { var next = tokens[i + n - 1]; freq.set(next, (freq.get(next) || 0) + 1); }
+    }
+  }
+  var entries = Array.from(freq.entries());
+  entries.sort(function(a, b) { return b[1] - a[1]; });
+  return entries.map(function(e) { return { word: e[0], count: e[1] }; });
+}
+function applyTemperature(candidates, temperature) {
+  if (candidates.length === 0) return [];
+  var total = 0;
+  for (var i = 0; i < candidates.length; i++) total += candidates[i].count;
+  if (temperature < 0.01) {
+    // Greedy: 100% für den ersten Kandidaten (deterministisch)
+    return candidates.map(function(c, i) { return { word: c.word, count: c.count, prob: i === 0 ? 1.0 : 0 }; });
+  }
+  var logProbs = candidates.map(function(c) { return Math.log(c.count / total) / temperature; });
+  var ml = logProbs[0];
+  for (var i = 1; i < logProbs.length; i++) { if (logProbs[i] > ml) ml = logProbs[i]; }
+  var es = 0;
+  var exps = logProbs.map(function(lp) { var e = Math.exp(lp - ml); es += e; return e; });
+  return candidates.map(function(c, i) { return { word: c.word, count: c.count, prob: exps[i] / es }; });
+}
+function sampleFromDist(dist) {
+  var r = Math.random(), c = 0;
+  // Bei Gleichstand (r genau auf Grenze) wird der erste genommen (< statt <=)
+  for (var i = 0; i < dist.length; i++) { c += dist[i].prob; if (r < c) return dist[i].word; }
+  return dist[dist.length - 1].word;
+}
+function pickFirst(arr) { return arr[0]; }
+function getAllContexts(tokens, n) {
+  var s = new Set();
+  for (var i = 0; i <= tokens.length - n; i++) s.add(tokens.slice(i, i + n - 1).join(" "));
+  return Array.from(s);
+}
+function makeGramKey(n, context, word) {
+  if (n === 1) return word;
+  return context.split(" ").concat([word]).join(" ");
+}
+
+function NgramRow(props) {
+  var display = detokenize(props.gram.split(" "));
+  var hl = props.highlight || props.clickHighlight;
+  var col = props.clickHighlight ? props.clickColor || props.color : props.color;
+  var relFreq = props.totalCount > 0 ? ((props.count / props.totalCount) * 100).toFixed(1) : "0.0";
+  return (
+    <tr data-gram={props.gram} style={{
+      background: hl ? col + "25" : "transparent",
+      transition: "background 0.3s",
+    }}>
+      <td style={{
+        padding: "6px 12px",
+        fontFamily: "'Fira Mono', monospace",
+        fontSize: 13,
+        fontWeight: hl ? 700 : 400,
+        color: hl ? col : "rgba(255,255,255,0.8)",
+        borderBottom: "1px solid rgba(255,255,255,0.05)",
+      }}>{display}</td>
+      <td style={{
+        padding: "6px 12px",
+        fontFamily: "'Fira Mono', monospace",
+        fontSize: 13,
+        textAlign: "right",
+        color: hl ? col : "rgba(255,255,255,0.6)",
+        borderBottom: "1px solid rgba(255,255,255,0.05)",
+      }}>{props.count}</td>
+      <td style={{
+        padding: "6px 12px",
+        fontFamily: "'Fira Mono', monospace",
+        fontSize: 13,
+        textAlign: "right",
+        color: hl ? col : "rgba(255,255,255,0.5)",
+        borderBottom: "1px solid rgba(255,255,255,0.05)",
+      }}>{relFreq}%</td>
+    </tr>
+  );
+}
+
+function SamplingViz(props) {
+  var dist = props.distribution;
+  var picked = props.picked;
+  var context = props.context;
+  var n = props.n;
+  var color = props.color;
+  var stepNum = props.stepNum;
+  var totalSteps = props.totalSteps;
+  var onCandidateClick = props.onCandidateClick;
+  var slots = [], hidden = 0;
+  if (dist && dist.length > 0) { slots = dist.slice(0, SAMPLING_SLOTS); hidden = dist.length - slots.length; }
+  var maxProb = 0;
+  for (var i = 0; i < slots.length; i++) { if (slots[i].prob > maxProb) maxProb = slots[i].prob; }
+  var empty = SAMPLING_SLOTS - slots.length;
+  var noData = !dist || dist.length === 0;
+
+  return (
+    <div style={{ background: "rgba(0,0,0,0.25)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 14, padding: 16 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, minHeight: 18 }}>
+        <div style={{ fontSize: 12, opacity: 0.6 }}>
+          {noData ? "Warte auf Generator ..." : (
+            <span>
+              {n === 1 ? "Kontext: (keiner)" : "Kontext: "}
+              {n > 1 && <span style={{ fontFamily: "'Fira Mono', monospace", color: color, fontWeight: 700 }}>{detokenize(context.split(" "))}</span>}
+              <span style={{ marginLeft: 8, opacity: 0.6 }}>{dist.length} Kandidat{dist.length !== 1 ? "en" : ""}</span>
+            </span>
+          )}
+        </div>
+        {totalSteps > 0 && <div style={{ fontSize: 11, opacity: 0.4, fontFamily: "'Fira Mono', monospace" }}>Schritt {stepNum} / {totalSteps}</div>}
+      </div>
+      {slots.map(function(item, i) {
+        var ip = item.word === picked;
+        var bw = maxProb > 0 ? Math.max(2, (item.prob / maxProb) * 100) : 0;
+        var pct = (item.prob * 100).toFixed(1);
+        return (
+          <div key={item.word + "-" + i}
+            onClick={function() { if (onCandidateClick) onCandidateClick(item.word, context); }}
+            style={{
+              display: "flex", alignItems: "center", gap: 8, height: 26, padding: "0 6px",
+              borderRadius: 6, cursor: onCandidateClick ? "pointer" : "default",
+              background: ip ? color + "25" : "transparent", transition: "background 0.3s",
+            }}>
+            <div style={{ width: 90, fontFamily: "'Fira Mono', monospace", fontSize: 13, fontWeight: ip ? 700 : 400, color: ip ? color : "rgba(255,255,255,0.7)", textAlign: "right", flexShrink: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.word}</div>
+            <div style={{ flex: 1, height: 14, background: "rgba(255,255,255,0.05)", borderRadius: 3, overflow: "hidden" }}>
+              <div style={{ height: "100%", borderRadius: 3, width: bw + "%", background: ip ? "linear-gradient(90deg, " + color + ", " + color + "cc)" : "rgba(255,255,255,0.15)", transition: "width 0.3s, background 0.3s" }} />
+            </div>
+            <div style={{ width: 44, fontSize: 11, fontFamily: "'Fira Mono', monospace", textAlign: "right", color: ip ? color : "rgba(255,255,255,0.4)", flexShrink: 0, fontWeight: ip ? 700 : 400 }}>{pct}%</div>
+            <div style={{ width: 14, fontSize: 11, flexShrink: 0, textAlign: "center", color: ip ? color : "transparent" }}>{ip ? "\u25C0" : ""}</div>
+          </div>
+        );
+      })}
+      {Array.from({ length: empty }).map(function(_, i) {
+        return (
+          <div key={"e" + i} style={{ display: "flex", alignItems: "center", gap: 8, height: 26, padding: "0 6px", opacity: 0.15 }}>
+            <div style={{ width: 90, textAlign: "right", fontSize: 13 }}>{"\u2014"}</div>
+            <div style={{ flex: 1, height: 14, background: "rgba(255,255,255,0.05)", borderRadius: 3 }} />
+            <div style={{ width: 44 }} /><div style={{ width: 14 }} />
+          </div>
+        );
+      })}
+      {hidden > 0 && <div style={{ fontSize: 11, opacity: 0.35, marginTop: 4, textAlign: "center" }}>+ {hidden} weitere</div>}
+    </div>
+  );
+}
+
+function NGramApp() {
+  var _s = useState(EXAMPLE_TEXT); var inputText = _s[0], setInputText = _s[1];
+  var _n = useState(2); var activeN = _n[0], setActiveN = _n[1];
+  var _p = useState(""); var prompt = _p[0], setPrompt = _p[1];
+  var _t = useState(0); var temperature = _t[0], setTemperature = _t[1];
+  var _tick = useState(0); var tick = _tick[0], setTick = _tick[1];
+  var _cg = useState(null); var clickedGram = _cg[0], setClickedGram = _cg[1];
+
+  // History: each step = { textWords, distribution, picked, context, highlightGram }
+  // textWords = words shown in text (picked NOT included yet)
+  // distribution/picked = sampling for the NEXT word (shown but not inserted)
+  var histRef = useRef([]);
+  var viewRef = useRef(-1);
+  var ctxRef = useRef(null);
+  var activeRef = useRef(false);
+  var autoRef = useRef(null);
+  var autoOnRef = useRef(false);
+  var outputRef = useRef(null);
+  var ngramBoxRef = useRef(null);
+
+  function rerender() { setTick(function(t) { return t + 1; }); }
+
+  var tokens = tokenize(inputText);
+  var ngrams = buildNgrams(tokens, activeN);
+  var tabs = [
+    { n: 1, label: "1-Gramm", color: "#e06c75" },
+    { n: 2, label: "2-Gramm", color: "#61afef" },
+    { n: 3, label: "3-Gramm", color: "#c678dd" },
+  ];
+  var at = tabs.find(function(t) { return t.n === activeN; });
+  var color = at ? at.color : "#61afef";
+  var maxCount = ngrams.length > 0 ? ngrams[0].count : 1;
+
+  var hist = histRef.current;
+  var vi = viewRef.current;
+  var storedStep = vi >= 0 && vi < hist.length ? hist[vi] : null;
+  var isActive = activeRef.current;
+  var atLatest = vi === hist.length - 1;
+  var isDone = isActive && hist.length > 0 && hist.length >= MAX_STEPS;
+
+  // Live-Berechnung: Bei Temperaturänderung Distribution neu berechnen (nur am aktuellen Schritt)
+  var step = storedStep;
+  if (storedStep && atLatest && storedStep.context !== null) {
+    var cands = getCandidates(tokens, activeN, storedStep.context);
+    if (cands.length > 0) {
+      var liveDist = applyTemperature(cands, temperature);
+      // Deterministisch: Nimm den Kandidaten mit höchster Wahrscheinlichkeit (ersten bei Gleichstand)
+      var maxProb = 0;
+      var livePicked = liveDist[0].word;
+      for (var i = 0; i < liveDist.length; i++) {
+        if (liveDist[i].prob > maxProb) { maxProb = liveDist[i].prob; livePicked = liveDist[i].word; }
+      }
+      var liveHg = makeGramKey(activeN, storedStep.context, livePicked);
+      step = { textWords: storedStep.textWords, distribution: liveDist, picked: livePicked, context: storedStep.context, highlightGram: liveHg };
+    }
+  }
+
+  var displayWords = step ? step.textWords : [];
+  var highlightGram = step ? step.highlightGram : null;
+  var canFwd = isActive ? (!atLatest || !isDone) : true;
+  var canBack = vi > 0;
+
+  function stopAuto() {
+    autoOnRef.current = false;
+    if (autoRef.current) { clearTimeout(autoRef.current); autoRef.current = null; }
+  }
+
+  function resetGen() {
+    stopAuto();
+    histRef.current = []; viewRef.current = -1; ctxRef.current = null; activeRef.current = false;
+    setClickedGram(null);
+    rerender();
+  }
+
+  function makeStep(textWords, context, n, temp) {
+    var cands = getCandidates(tokens, n, context);
+    if (cands.length === 0) return { textWords: textWords, distribution: null, picked: null, context: context, highlightGram: null };
+    var dist = applyTemperature(cands, temp);
+    // Deterministisch: Nimm den Kandidaten mit höchster Wahrscheinlichkeit (ersten bei Gleichstand)
+    var maxProb = 0;
+    var picked = dist[0].word;
+    for (var i = 0; i < dist.length; i++) {
+      if (dist[i].prob > maxProb) { maxProb = dist[i].prob; picked = dist[i].word; }
+    }
+    var hg = makeGramKey(n, context, picked);
+    return { textWords: textWords, distribution: dist, picked: picked, context: context, highlightGram: hg };
+  }
+
+  function initGen() {
+    var n = activeN; var temp = temperature;
+    var ctxs = n === 1 ? [""] : getAllContexts(tokens, n);
+    if (ctxs.length === 0) return false;
+    var pt = tokenize(prompt.trim());
+    var result, context;
+    if (n === 1) { result = pt.length > 0 ? pt.slice() : []; context = ""; }
+    else if (pt.length >= n - 1) {
+      result = pt.slice(); context = pt.slice(-(n - 1)).join(" ");
+      if (ctxs.indexOf(context) < 0) { context = pickFirst(ctxs); result = pt.concat(context.split(" ")); }
+    } else if (pt.length > 0) {
+      var lw = pt[pt.length - 1].toLowerCase();
+      var m = ctxs.filter(function(k) { return k.toLowerCase().indexOf(lw) >= 0; });
+      if (m.length > 0) { context = pickFirst(m); result = pt.slice(); var ct = context.split(" "); for (var i = 1; i < ct.length; i++) result.push(ct[i]); }
+      else { context = pickFirst(ctxs); result = pt.concat(context.split(" ")); }
+    } else { context = n === 1 ? "" : pickFirst(ctxs); result = n === 1 ? [] : context.split(" ").slice(); }
+
+    var s = makeStep(result.slice(), context, n, temp);
+    histRef.current = [s];
+    viewRef.current = 0;
+    ctxRef.current = context;
+    activeRef.current = true;
+    setClickedGram(null);
+    rerender();
+    return true;
+  }
+
+  function advanceOneStep() {
+    var h = histRef.current;
+    if (h.length >= MAX_STEPS) return false;
+    var n = activeN; var temp = temperature;
+    var prev = h[h.length - 1];
+    if (!prev.context && prev.context !== "") return false;
+
+    // Berechne picked basierend auf aktueller Temperatur (deterministisch)
+    var cands = getCandidates(tokens, n, prev.context);
+    if (cands.length === 0) return false;
+    var dist = applyTemperature(cands, temp);
+    var maxProb = 0;
+    var picked = dist[0].word;
+    for (var i = 0; i < dist.length; i++) {
+      if (dist[i].prob > maxProb) { maxProb = dist[i].prob; picked = dist[i].word; }
+    }
+
+    // Commit picked word into text
+    var newWords = prev.textWords.slice();
+    newWords.push(picked);
+
+    // Compute new context
+    var newCtx;
+    if (n === 1) { newCtx = ""; }
+    else {
+      var cw = prev.context.split(" "); cw.push(picked);
+      if (cw.length > n - 1) cw.shift();
+      newCtx = cw.join(" ");
+    }
+
+    var s = makeStep(newWords, newCtx, n, temp);
+    h.push(s);
+    ctxRef.current = newCtx;
+    viewRef.current = h.length - 1;
+    setClickedGram(null);
+    rerender();
+    return true;
+  }
+
+  function stepForward() {
+    if (!activeRef.current) { initGen(); return; }
+    if (viewRef.current < histRef.current.length - 1) {
+      viewRef.current = viewRef.current + 1; setClickedGram(null); rerender(); return;
+    }
+    advanceOneStep();
+  }
+
+  function stepBack() {
+    if (viewRef.current > 0) { viewRef.current = viewRef.current - 1; setClickedGram(null); rerender(); }
+  }
+
+  function toggleAuto() {
+    if (autoOnRef.current) { stopAuto(); rerender(); return; }
+    if (!activeRef.current) { if (!initGen()) return; }
+    autoOnRef.current = true; rerender();
+    function doTick() {
+      if (!autoOnRef.current) return;
+      if (viewRef.current < histRef.current.length - 1) {
+        viewRef.current = viewRef.current + 1; setClickedGram(null); rerender();
+      } else {
+        var ok = advanceOneStep();
+        if (!ok) { stopAuto(); rerender(); return; }
+      }
+      autoRef.current = setTimeout(doTick, 700);
+    }
+    autoRef.current = setTimeout(doTick, 300);
+  }
+
+  function handleCandidateClick(word, context) {
+    var gram = makeGramKey(activeN, context, word);
+    setClickedGram(gram);
+    // Scroll to matching pill
+    if (ngramBoxRef.current) {
+      var el = ngramBoxRef.current.querySelector('[data-gram="' + gram + '"]');
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  }
+
+  useEffect(function() {
+    function handleKey(e) {
+      if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
+      if (e.code === "ArrowRight" || e.code === "Space") { e.preventDefault(); if (!autoOnRef.current) stepForward(); }
+      else if (e.code === "ArrowLeft") { e.preventDefault(); if (!autoOnRef.current) stepBack(); }
+      else if (e.code === "Escape") { stopAuto(); rerender(); }
+    }
+    window.addEventListener("keydown", handleKey);
+    return function() { window.removeEventListener("keydown", handleKey); };
+  });
+  useEffect(function() { if (outputRef.current) outputRef.current.scrollTop = outputRef.current.scrollHeight; }, [tick]);
+  useEffect(function() { return function() { stopAuto(); }; }, []);
+
+  var tempLabel = temperature < 0.01 ? "Greedy" : temperature < 0.5 ? "Wenig Zufall" : temperature < 1.2 ? "Normal" : temperature < 2.0 ? "Viel Zufall" : "Chaotisch";
+  var autoOn = autoOnRef.current;
+
+  return (
+    <div style={{ color: "#e0e0e0", fontFamily: "'Nunito', sans-serif", padding: "24px 16px", maxWidth: 800, margin: "0 auto" }}>
+      <div style={{ textAlign: "center", marginBottom: 28 }}>
+        <h1 style={{ fontSize: 32, fontWeight: 900, margin: 0, background: "linear-gradient(90deg, #e06c75, #61afef, #c678dd)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>N-Gramm Werkstatt</h1>
+        <p style={{ fontSize: 14, opacity: 0.5, margin: "6px 0 0" }}>Wortmuster · Sampling · Temperatur</p>
+      </div>
+
+      <div style={{ marginBottom: 24 }}>
+        <label style={{ display: "block", fontSize: 13, fontWeight: 700, marginBottom: 6, opacity: 0.7 }}>Quelltext</label>
+        <textarea value={inputText} onChange={function(e) { setInputText(e.target.value); resetGen(); }} rows={4}
+          style={{ width: "100%", boxSizing: "border-box", padding: 14, borderRadius: 12, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(0,0,0,0.3)", color: "#e0e0e0", fontFamily: "'Fira Mono', monospace", fontSize: 13, lineHeight: 1.6, resize: "vertical", outline: "none" }} />
+        <div style={{ fontSize: 12, opacity: 0.4, marginTop: 4 }}>{tokens.length} Wörter</div>
+      </div>
+
+      <div style={{ marginBottom: 24 }}>
+        <div style={{ display: "flex", gap: 4, marginBottom: 16 }}>
+          {tabs.map(function(tab) {
+            var isCur = activeN === tab.n;
+            return (
+              <button key={tab.n} onClick={function() { if (!autoOn) { setActiveN(tab.n); resetGen(); } }} disabled={autoOn}
+                style={{ flex: 1, padding: "10px 8px", border: "none", borderRadius: 10, fontFamily: "'Nunito', sans-serif", fontWeight: isCur ? 800 : 600, fontSize: 15, cursor: autoOn ? "not-allowed" : "pointer", background: isCur ? tab.color : "rgba(255,255,255,0.06)", color: isCur ? "#fff" : "rgba(255,255,255,0.5)", transition: "all 0.25s", boxShadow: isCur ? "0 4px 20px " + tab.color + "50" : "none", opacity: autoOn && !isCur ? 0.4 : 1 }}>{tab.label}</button>
+            );
+          })}
+        </div>
+        <div ref={ngramBoxRef} style={{ background: "rgba(0,0,0,0.25)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 14, padding: 0, maxHeight: 200, overflowY: "auto" }}>
+          {ngrams.length === 0 ? (
+            <div style={{ textAlign: "center", opacity: 0.4, padding: 20, fontSize: 13 }}>Text eingeben, um N-Gramme zu sehen.</div>
+          ) : (
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
+                <tr style={{ position: "sticky", top: 0, background: "rgba(30,30,50,0.95)", zIndex: 1 }}>
+                  <th style={{ padding: "10px 12px", textAlign: "left", fontSize: 11, fontWeight: 700, color: "rgba(255,255,255,0.5)", borderBottom: "1px solid rgba(255,255,255,0.1)", textTransform: "uppercase", letterSpacing: "0.5px" }}>N-Gramm</th>
+                  <th style={{ padding: "10px 12px", textAlign: "right", fontSize: 11, fontWeight: 700, color: "rgba(255,255,255,0.5)", borderBottom: "1px solid rgba(255,255,255,0.1)", textTransform: "uppercase", letterSpacing: "0.5px" }}>Anzahl</th>
+                  <th style={{ padding: "10px 12px", textAlign: "right", fontSize: 11, fontWeight: 700, color: "rgba(255,255,255,0.5)", borderBottom: "1px solid rgba(255,255,255,0.1)", textTransform: "uppercase", letterSpacing: "0.5px" }}>Häufigkeit</th>
+                </tr>
+              </thead>
+              <tbody>
+                {ngrams.map(function(ng) {
+                  var totalCount = tokens.length - activeN + 1;
+                  return <NgramRow key={ng.gram} gram={ng.gram} count={ng.count} totalCount={totalCount}
+                    highlight={highlightGram === ng.gram}
+                    clickHighlight={clickedGram === ng.gram}
+                    clickColor={"#e5c07b"}
+                    color={color} />;
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+        <div style={{ fontSize: 12, opacity: 0.4, marginTop: 6 }}>{ngrams.length} verschiedene {activeN}-Gramme</div>
+      </div>
+
+      <div style={{ marginBottom: 24 }}>
+        <div style={{ marginBottom: 14, padding: 14, borderRadius: 12, background: "rgba(229,192,123,0.06)", border: "1px solid rgba(229,192,123,0.15)" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+            <label style={{ fontSize: 13, fontWeight: 700, color: "#e5c07b" }}>Temperatur</label>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ fontSize: 12, opacity: 0.6, color: "#e5c07b" }}>{tempLabel}</span>
+              <span style={{ fontFamily: "'Fira Mono', monospace", fontSize: 14, fontWeight: 700, color: "#e5c07b" }}>{temperature.toFixed(2)}</span>
+            </div>
+          </div>
+          <input type="range" min="0" max="3" step="0.05" value={temperature} onChange={function(e) { setTemperature(parseFloat(e.target.value)); }} disabled={autoOn} style={{ width: "100%", margin: 0 }} />
+          <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4 }}>
+            <span style={{ fontSize: 11, opacity: 0.35 }}>0 = vorhersagbar</span>
+            <span style={{ fontSize: 11, opacity: 0.35 }}>3 = chaotisch</span>
+          </div>
+        </div>
+
+        <div style={{ marginBottom: 12 }}>
+          <input type="text" value={prompt} onChange={function(e) { setPrompt(e.target.value); }} placeholder="Anfangstext (optional)" disabled={isActive}
+            style={{ width: "100%", boxSizing: "border-box", padding: "10px 14px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.12)", background: isActive ? "rgba(0,0,0,0.15)" : "rgba(0,0,0,0.25)", color: isActive ? "rgba(255,255,255,0.4)" : "#e0e0e0", fontFamily: "'Fira Mono', monospace", fontSize: 13, outline: "none" }} />
+          <div style={{ fontSize: 11, opacity: 0.35, marginTop: 4 }}>Vorgabe, die der Computer fortführt</div>
+        </div>
+
+        <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap", alignItems: "center" }}>
+          <button onClick={function() { if (!autoOn) stepBack(); }} disabled={!canBack || autoOn}
+            style={{ padding: "9px 14px", borderRadius: 10, border: "none", fontWeight: 700, fontSize: 18, cursor: canBack && !autoOn ? "pointer" : "not-allowed", background: canBack && !autoOn ? "rgba(255,255,255,0.1)" : "rgba(255,255,255,0.03)", color: canBack && !autoOn ? "rgba(255,255,255,0.8)" : "rgba(255,255,255,0.2)", transition: "all 0.2s", lineHeight: 1 }}>{"\u25C0"}</button>
+
+          <button onClick={function() { if (!autoOn) stepForward(); }} disabled={autoOn || (isActive && !canFwd)}
+            style={{ padding: "9px 20px", borderRadius: 10, border: "none", fontFamily: "'Nunito', sans-serif", fontWeight: 800, fontSize: 14, cursor: autoOn || (isActive && !canFwd) ? "not-allowed" : "pointer", background: !isActive ? "linear-gradient(135deg, #98c379, #7fb86a)" : "linear-gradient(135deg, " + color + ", " + color + "cc)", color: "#fff", boxShadow: "0 3px 14px rgba(0,0,0,0.3)", transition: "all 0.2s" }}>
+            {!isActive ? "Start" : atLatest ? "Nächstes Wort \u25B6" : "Vorwärts \u25B6"}
+          </button>
+
+          <button onClick={toggleAuto} disabled={isDone && !autoOn}
+            style={{ padding: "9px 16px", borderRadius: 10, border: "none", fontFamily: "'Nunito', sans-serif", fontWeight: 700, fontSize: 13, cursor: isDone && !autoOn ? "not-allowed" : "pointer", background: autoOn ? "linear-gradient(135deg, #e06c75, #be5046)" : "rgba(255,255,255,0.08)", color: autoOn ? "#fff" : "rgba(255,255,255,0.6)", transition: "all 0.2s" }}>
+            {autoOn ? "Stopp" : "Auto \u25B6\u25B6"}
+          </button>
+
+          <button onClick={resetGen}
+            style={{ padding: "9px 14px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.12)", background: "transparent", color: "rgba(255,255,255,0.5)", fontFamily: "'Nunito', sans-serif", fontWeight: 600, fontSize: 13, cursor: "pointer" }}>
+            {"\u21BB"} Zurücksetzen
+          </button>
+
+          {isActive && <span style={{ fontSize: 11, opacity: 0.3, marginLeft: 4, fontFamily: "'Fira Mono', monospace" }}>Leertaste / Pfeiltasten</span>}
+        </div>
+
+        <div ref={outputRef} style={{ background: "rgba(0,0,0,0.35)", border: "2px solid " + (isActive ? color + "40" : "rgba(255,255,255,0.08)"), borderRadius: 14, padding: 18, minHeight: 70, maxHeight: 180, overflowY: "auto", transition: "border-color 0.3s" }}>
+          {displayWords.length === 0 && !isActive ? (
+            <div style={{ opacity: 0.3, fontSize: 13, textAlign: "center" }}>Drücke Start oder Leertaste ...</div>
+          ) : displayWords.length === 0 && isActive ? (
+            <div style={{ opacity: 0.3, fontSize: 13, textAlign: "center" }}>Drücke Nächstes Wort ...</div>
+          ) : (
+            <div style={{ fontFamily: "'Fira Mono', monospace", fontSize: 14, lineHeight: 1.8 }}>
+              {displayWords.map(function(word, i) {
+                var sp = i > 0 && !PUNCT.has(word);
+                return (
+                  <span key={i}>
+                    {sp && " "}
+                    <span style={{ padding: "2px 2px", borderRadius: 4 }}>{word}</span>
+                  </span>
+                );
+              })}
+              {isActive && atLatest && !isDone && (
+                <span style={{ display: "inline-block", width: 8, height: 18, marginLeft: 3, background: color, borderRadius: 2, verticalAlign: "text-bottom", animation: "blink 0.8s infinite" }} />
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div style={{ marginBottom: 24 }}>
+        <label style={{ display: "block", fontSize: 13, fontWeight: 700, marginBottom: 10, opacity: 0.7 }}>Sampling – nächstes Wort?</label>
+        <SamplingViz
+          distribution={step ? step.distribution : null}
+          picked={step ? step.picked : null}
+          context={step ? step.context : null}
+          n={activeN} color={color}
+          stepNum={vi >= 0 ? vi + 1 : 0}
+          totalSteps={hist.length}
+          onCandidateClick={handleCandidateClick}
+        />
+        {step && step.distribution && (
+          <div style={{ fontSize: 11, opacity: 0.3, marginTop: 6 }}>Klick auf Kandidat zeigt N-Gramm oben</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<NGramApp />);
+</script>
+</body>
+</html>
